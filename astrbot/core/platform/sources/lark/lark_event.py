@@ -163,6 +163,7 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id: str | None = None,
         receive_id_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> bool:
         """Send one IM message, retrying rejected private sends by chat ID once.
 
@@ -174,6 +175,9 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id: Recipient for proactive messages.
             receive_id_type: Recipient ID type for proactive messages.
             fallback_chat_id: Known private chat to use if open ID is rejected.
+            reply_in_thread: Whether to reply inside the thread the target message
+                belongs to. Only applies to replies; sending a proactive message
+                creates a new thread in topic groups regardless of this flag.
 
         Returns:
             Whether the message was delivered.
@@ -197,7 +201,7 @@ class LarkMessageEvent(AstrMessageEvent):
                     .content(content)
                     .msg_type(msg_type)
                     .uuid(str(uuid.uuid4()))
-                    .reply_in_thread(False)
+                    .reply_in_thread(reply_in_thread)
                     .build()
                 )
                 .build()
@@ -576,7 +580,22 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id: str | None = None,
         receive_id_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> bool:
+        """Send an interactive card as a new card entity.
+
+        Args:
+            card_json: Card JSON payload.
+            lark_client: Lark API client.
+            reply_message_id: Message to reply to, when sending a reply.
+            receive_id: Recipient for proactive messages.
+            receive_id_type: Recipient ID type for proactive messages.
+            fallback_chat_id: Known private chat to use if open ID is rejected.
+            reply_in_thread: Whether to reply inside the target message's thread.
+
+        Returns:
+            Whether the card was delivered.
+        """
         if lark_client.cardkit is None:
             logger.error("[Lark] API Client cardkit 模块未初始化，无法发送卡片")
             return False
@@ -615,6 +634,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
             fallback_chat_id=fallback_chat_id,
+            reply_in_thread=reply_in_thread,
         )
 
     @staticmethod
@@ -626,6 +646,7 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id: str | None = None,
         receive_id_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> bool:
         if not reasoning_content:
             return True
@@ -640,6 +661,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
             fallback_chat_id=fallback_chat_id,
+            reply_in_thread=reply_in_thread,
         )
 
     @staticmethod
@@ -651,6 +673,7 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id_type: str | None = None,
         message_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> None:
         """Send each message component with an optional private chat fallback.
 
@@ -662,6 +685,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id_type: Recipient ID type for proactive messages.
             message_type: AstrBot message type embedded in callback context.
             fallback_chat_id: Known private chat to use if open ID is rejected.
+            reply_in_thread: Whether to reply inside the target message's thread.
 
         Raises:
             RuntimeError: A proactive message cannot be delivered.
@@ -708,6 +732,7 @@ class LarkMessageEvent(AstrMessageEvent):
                 receive_id=receive_id,
                 receive_id_type=receive_id_type,
                 fallback_chat_id=fallback_chat_id,
+                reply_in_thread=reply_in_thread,
             ):
                 return
 
@@ -734,6 +759,7 @@ class LarkMessageEvent(AstrMessageEvent):
                 receive_id=receive_id,
                 receive_id_type=receive_id_type,
                 fallback_chat_id=fallback_chat_id,
+                reply_in_thread=reply_in_thread,
             ):
                 for component in button_components:
                     if isinstance(component, Plain):
@@ -777,6 +803,7 @@ class LarkMessageEvent(AstrMessageEvent):
                         receive_id=receive_id,
                         receive_id_type=receive_id_type,
                         fallback_chat_id=fallback_chat_id,
+                        reply_in_thread=reply_in_thread,
                     )
 
             # 维持组件顺序：遇到折叠面板标记先 flush 当前普通内容并发送卡片
@@ -797,6 +824,7 @@ class LarkMessageEvent(AstrMessageEvent):
                                 receive_id=receive_id,
                                 receive_id_type=receive_id_type,
                                 fallback_chat_id=fallback_chat_id,
+                                reply_in_thread=reply_in_thread,
                             )
                             if not success:
                                 buffered_components.append(
@@ -818,6 +846,7 @@ class LarkMessageEvent(AstrMessageEvent):
                 receive_id,
                 receive_id_type,
                 fallback_chat_id,
+                reply_in_thread,
             )
 
         for audio_comp in audio_components:
@@ -828,6 +857,7 @@ class LarkMessageEvent(AstrMessageEvent):
                 receive_id,
                 receive_id_type,
                 fallback_chat_id,
+                reply_in_thread,
             )
 
         for media_comp in media_components:
@@ -838,6 +868,7 @@ class LarkMessageEvent(AstrMessageEvent):
                 receive_id,
                 receive_id_type,
                 fallback_chat_id,
+                reply_in_thread,
             )
 
     async def send(self, message: MessageChain) -> None:
@@ -847,8 +878,20 @@ class LarkMessageEvent(AstrMessageEvent):
             self.bot,
             reply_message_id=self.message_obj.message_id,
             message_type=self.message_obj.type.value,
+            reply_in_thread=self._reply_in_thread(),
         )
         await super().send(message)
+
+    def _reply_in_thread(self) -> bool:
+        """Return whether replies should stay inside the inbound message's thread.
+
+        Lark only returns ``thread_id`` for messages that belong to a thread, so
+        this doubles as the "is the inbound message a thread message" check.
+
+        Returns:
+            True when the inbound message belongs to a Lark thread.
+        """
+        return bool(getattr(self.message_obj.raw_message, "thread_id", None))
 
     @staticmethod
     async def _send_file_message(
@@ -858,6 +901,7 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id: str | None = None,
         receive_id_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> None:
         """Upload and send a file.
 
@@ -868,6 +912,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id: Recipient for proactive messages.
             receive_id_type: Recipient ID type for proactive messages.
             fallback_chat_id: Known private chat to use if open ID is rejected.
+            reply_in_thread: Whether to reply inside the target message's thread.
 
         Raises:
             RuntimeError: A proactive message cannot be delivered.
@@ -890,6 +935,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
             fallback_chat_id=fallback_chat_id,
+            reply_in_thread=reply_in_thread,
         )
 
     @staticmethod
@@ -900,6 +946,7 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id: str | None = None,
         receive_id_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> None:
         """Upload and send an audio message.
 
@@ -910,6 +957,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id: Recipient for proactive messages.
             receive_id_type: Recipient ID type for proactive messages.
             fallback_chat_id: Known private chat to use if open ID is rejected.
+            reply_in_thread: Whether to reply inside the target message's thread.
 
         Raises:
             RuntimeError: A proactive message cannot be delivered.
@@ -971,6 +1019,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
             fallback_chat_id=fallback_chat_id,
+            reply_in_thread=reply_in_thread,
         )
 
     @staticmethod
@@ -981,6 +1030,7 @@ class LarkMessageEvent(AstrMessageEvent):
         receive_id: str | None = None,
         receive_id_type: str | None = None,
         fallback_chat_id: str | None = None,
+        reply_in_thread: bool = False,
     ) -> None:
         """Upload and send a video message.
 
@@ -991,6 +1041,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id: Recipient for proactive messages.
             receive_id_type: Recipient ID type for proactive messages.
             fallback_chat_id: Known private chat to use if open ID is rejected.
+            reply_in_thread: Whether to reply inside the target message's thread.
 
         Raises:
             RuntimeError: A proactive message cannot be delivered.
@@ -1052,6 +1103,7 @@ class LarkMessageEvent(AstrMessageEvent):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
             fallback_chat_id=fallback_chat_id,
+            reply_in_thread=reply_in_thread,
         )
 
     async def react(self, emoji: str) -> None:
@@ -1143,6 +1195,7 @@ class LarkMessageEvent(AstrMessageEvent):
         reply_message_id: str | None = None,
         receive_id: str | None = None,
         receive_id_type: str | None = None,
+        reply_in_thread: bool = False,
     ) -> bool:
         """将卡片实体作为 interactive 消息发送。"""
         content = json.dumps(
@@ -1156,6 +1209,7 @@ class LarkMessageEvent(AstrMessageEvent):
             reply_message_id=reply_message_id,
             receive_id=receive_id,
             receive_id_type=receive_id_type,
+            reply_in_thread=reply_in_thread,
         )
 
     async def _update_streaming_text(
@@ -1356,6 +1410,7 @@ class LarkMessageEvent(AstrMessageEvent):
                             sent = await self._send_card_message(
                                 card_id,
                                 reply_message_id=self.message_obj.message_id,
+                                reply_in_thread=self._reply_in_thread(),
                             )
                             if not sent:
                                 logger.error(
